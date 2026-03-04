@@ -1,0 +1,79 @@
+# =============================================================================
+# Example 2: Instruction Tuning
+# =============================================================================
+#
+# WHAT: Teach Llama-3.2-1B to follow instructions using the full Alpaca dataset.
+# WHY:  Shows the difference between a base model (predicts next token) and
+#        an instruction-tuned model (answers questions, follows directions).
+# VRAM: ~3GB with QLoRA 4-bit. Comfortable on any modern GPU.
+# TIME: ~5 minutes on RTX 3060+.
+#
+# KEY CONCEPT — Base vs Instruct:
+#   A base model is trained to predict the next word. Ask it "What is gravity?"
+#   and it might continue with "What is magnetism? What is..." — just predicting
+#   what comes next in a textbook. An instruction-tuned model actually ANSWERS
+#   the question. That's what we're building here.
+#
+# COMPARED TO EXAMPLE 01:
+#   - Bigger model (1B vs 0.5B) — more capacity to learn
+#   - More data (5000 vs 500 examples) — better generalization
+#   - Chat template formatting — teaches proper turn-taking
+#   - Before/after comparison — see the difference instruction tuning makes
+#
+# RUN: uv run tfab train docs/examples/02-instruction-tuning/tenfabric.yaml
+
+project: instruction-tuning
+version: 1
+
+model:
+  base: meta-llama/Llama-3.2-1B     # 1B params — sweet spot for learning
+  method: lora                       # LoRA: train ~0.5% of params
+  quantization: 4bit                 # 4-bit: ~3GB instead of ~8GB
+  # WHY Llama-3.2-1B?
+  # Per DistilLabs benchmarks, 1B models show the MOST improvement from
+  # fine-tuning — even more than 3B or 7B models. Smaller models have more
+  # to learn, and the relative improvement is dramatic.
+
+dataset:
+  source: tatsu-lab/alpaca           # 52K instruction-following examples
+  format: alpaca                     # {instruction, input, output}
+  max_samples: 5000                  # 5K examples — good quality without long training
+  # WHY 5000?
+  # Research (LIMA paper, 2023) showed that 1K high-quality examples can match
+  # 50K low-quality ones. Alpaca is machine-generated (GPT-3.5), so we use
+  # more examples to compensate. 5K is a pragmatic sweet spot.
+
+training:
+  backend: trl
+  method: sft                        # Supervised Fine-Tuning
+  epochs: 1                          # 1 pass through 5K examples = 1250 steps
+  batch_size: 4
+  learning_rate: 2e-4                # Standard LoRA learning rate
+  max_seq_length: 512
+  gradient_checkpointing: true
+  optimizer: adamw_8bit
+  lr_scheduler: cosine
+  warmup_ratio: 0.03
+  # WHY cosine scheduler?
+  # Linear: learning rate drops at constant speed. Simple but not optimal.
+  # Cosine: learning rate drops slowly at first, then rapidly at the end.
+  # This gives the model more time to explore early, then fine-tune later.
+  # Cosine consistently outperforms linear in fine-tuning benchmarks.
+
+lora:
+  r: 16                              # Rank 16 — good for instruction following
+  alpha: 16
+  dropout: 0.05
+  target_modules: auto
+  # WHY dropout 0.05?
+  # Dropout randomly "turns off" 5% of LoRA weights each step.
+  # This forces the model to not rely on any single weight, which
+  # prevents overfitting (memorizing training data instead of learning patterns).
+  # 0.05 is light — enough to regularize without slowing learning.
+
+infra:
+  provider: local
+
+output:
+  dir: ./outputs/instruction-tuning
+  merge_adapter: true

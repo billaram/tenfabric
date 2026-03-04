@@ -1,0 +1,68 @@
+# =============================================================================
+# Example 1: Your First Fine-Tune
+# =============================================================================
+#
+# WHAT: Fine-tune Qwen2.5-0.5B on 500 Alpaca examples using LoRA.
+# WHY:  The smallest useful model — proves the concept in ~2 minutes.
+# VRAM: ~2GB. Runs on literally any GPU (even a T4 or GTX 1660).
+#
+# HOW IT WORKS:
+#   1. Load a pretrained 0.5B parameter model (already knows language)
+#   2. Freeze all 500M parameters (we won't change these)
+#   3. Attach small LoRA adapters (~1.5M new parameters) to key layers
+#   4. Train only those 1.5M parameters on our data
+#   5. Result: a model that follows instructions, at 0.3% the training cost
+#
+# RUN: uv run tfab train docs/examples/01-first-finetune/tenfabric.yaml
+
+project: first-finetune
+version: 1
+
+model:
+  base: Qwen/Qwen2.5-0.5B           # 0.5B params — tiny but capable
+  method: lora                        # LoRA: train ~0.3% of params instead of 100%
+  quantization: 4bit                  # Shrink model from 2GB → 0.5GB in memory
+  # WHY 4-bit? Each parameter normally takes 16 bits (2 bytes).
+  # 4-bit quantization packs 4 params into the space of 1, cutting VRAM by ~75%.
+  # Quality loss is negligible for LoRA because we're not updating these weights.
+
+dataset:
+  source: tatsu-lab/alpaca            # 52K instruction-following examples from Stanford
+  format: alpaca                      # Format: {instruction, input, output}
+  max_samples: 500                    # Just 500 to keep it fast. Increase for better quality.
+  # WHY Alpaca? It's the "hello world" of fine-tuning datasets.
+  # Clean, well-structured, diverse instructions. Perfect for learning.
+
+training:
+  backend: trl                        # HuggingFace TRL — the standard training library
+  method: sft                         # Supervised Fine-Tuning: learn from examples
+  epochs: 1                           # 1 pass through the data. More epochs = more memorization.
+  batch_size: 4                       # Process 4 examples at once. Higher = faster but more VRAM.
+  learning_rate: 2e-4                 # How fast to update weights. 2e-4 is the sweet spot for LoRA.
+  max_seq_length: 512                 # Max tokens per example. 512 is enough for Alpaca.
+  gradient_checkpointing: true        # Trade compute for memory. ~30% less VRAM, ~10% slower.
+  # WHY these values?
+  # - lr=2e-4: Standard for LoRA. Too high → garbage. Too low → no learning.
+  # - batch_size=4: Good balance. bs=1 is noisy, bs=8+ uses more VRAM.
+  # - 1 epoch on 500 samples = 125 training steps. Enough to see real learning.
+
+lora:
+  r: 16                               # Rank of LoRA matrices. Higher = more capacity, more VRAM.
+  alpha: 16                           # Scaling factor. Usually set equal to r.
+  dropout: 0.05                       # Light regularization to prevent overfitting.
+  target_modules: auto                # Auto-detect which layers to adapt (q/k/v/o projections).
+  # WHY r=16?
+  # Think of r as "how much new knowledge can we inject."
+  # r=8:  Minimal — good for narrow tasks (sentiment, classification)
+  # r=16: Standard — good for instruction following
+  # r=32: Maximum — good for complex tasks (code, math)
+  # r=64: Overkill for most use cases, wastes VRAM
+
+infra:
+  provider: local                     # Use your own GPU. No cloud needed.
+
+output:
+  dir: ./outputs/first-finetune
+  merge_adapter: true                 # Merge LoRA weights back into model for easy deployment.
+  # After training, you'll have a complete model in outputs/first-finetune/merged/
+  # that you can load with transformers.AutoModelForCausalLM.from_pretrained()

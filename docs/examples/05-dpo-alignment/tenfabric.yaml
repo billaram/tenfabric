@@ -1,0 +1,91 @@
+# =============================================================================
+# Example 5: DPO Alignment
+# =============================================================================
+#
+# WHAT: Align Llama-3.2-1B to prefer good answers over bad ones using DPO.
+# WHY:  SFT teaches a model WHAT to say. DPO teaches it WHAT NOT to say.
+#        Together they produce a model that's both capable AND well-behaved.
+# VRAM: ~4GB with LoRA 4-bit. Works on RTX 3060+.
+# TIME: ~5 minutes on RTX 3060+.
+#
+# KEY CONCEPT — SFT vs DPO:
+#   SFT (Examples 1-4): "Here's a good answer — learn to produce this."
+#   DPO: "Here are TWO answers — this one is BETTER than that one. Learn why."
+#
+#   SFT alone can produce helpful but sometimes unsafe/low-quality responses.
+#   DPO refines the model's preferences after SFT, pushing it toward better outputs.
+#
+# HOW DPO WORKS (simplified):
+#   Training data has triplets: (prompt, chosen_response, rejected_response)
+#   The model learns to assign higher probability to "chosen" and lower to "rejected".
+#   No reward model needed (unlike RLHF) — DPO is a direct optimization.
+#
+#   Think of it like teaching by comparison:
+#     "This essay is better than that one" is easier to learn from than
+#     "Here's what a perfect essay looks like."
+#
+# RUN: uv run tfab train docs/examples/05-dpo-alignment/tenfabric.yaml
+
+project: dpo-alignment
+version: 1
+
+model:
+  base: meta-llama/Llama-3.2-1B     # Same model as Example 2
+  method: lora
+  quantization: 4bit
+  # IMPORTANT: In production, you'd DPO-align a model AFTER SFT.
+  # First run Example 2 (instruction tuning), then DPO on that output.
+  # Here we apply DPO directly to the base model for simplicity.
+
+dataset:
+  source: argilla/ultrafeedback-binarized-preferences  # Preference pairs
+  format: sharegpt                   # Conversation format with chosen/rejected
+  max_samples: 2000
+  # WHY UltraFeedback?
+  # It contains 60K+ preference pairs where humans rated which response is better.
+  # Each example has:
+  #   - prompt: "Explain photosynthesis"
+  #   - chosen: (detailed, accurate, helpful response)
+  #   - rejected: (vague, incorrect, or unhelpful response)
+  #
+  # The model learns to increase probability of "chosen" style responses
+  # and decrease probability of "rejected" style responses.
+
+training:
+  backend: trl
+  method: dpo                        # Direct Preference Optimization
+  epochs: 1
+  batch_size: 2                      # DPO processes pairs — effectively 2x memory
+  learning_rate: 5e-5                # Much lower LR than SFT
+  max_seq_length: 512
+  gradient_checkpointing: true
+  optimizer: adamw_8bit
+  lr_scheduler: cosine
+  warmup_ratio: 0.1                  # Longer warmup for stability
+  # WHY lower learning rate (5e-5 vs 2e-4)?
+  # DPO is a REFINEMENT step, not a teaching step. We're adjusting preferences,
+  # not learning new knowledge. Too high a learning rate would destroy what
+  # the model already knows (catastrophic forgetting).
+  #
+  # WHY batch_size: 2?
+  # Each DPO example loads TWO sequences (chosen + rejected) plus the prompt.
+  # That's ~3x the memory per example compared to SFT. batch_size=2 keeps
+  # us within ~4GB VRAM on 4-bit quantized 1B model.
+  #
+  # WHY warmup_ratio: 0.1?
+  # DPO loss is sensitive to early gradient noise. Warming up for 10% of steps
+  # (vs 3% for SFT) gives the optimizer time to find a stable direction
+  # before making large updates. Without this, training can diverge.
+
+lora:
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  target_modules: auto
+
+infra:
+  provider: local
+
+output:
+  dir: ./outputs/dpo-alignment
+  merge_adapter: true

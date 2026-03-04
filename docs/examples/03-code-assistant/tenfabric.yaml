@@ -1,0 +1,94 @@
+# =============================================================================
+# Example 3: Code Assistant
+# =============================================================================
+#
+# WHAT: Fine-tune Qwen2.5-Coder-1.5B to generate Python code.
+# WHY:  Shows domain-specific fine-tuning — teaching a model one skill deeply
+#        instead of many skills broadly.
+# VRAM: ~4GB with QLoRA 4-bit. Works on RTX 3060+.
+# TIME: ~8 minutes on RTX 3060+.
+#
+# KEY CONCEPT — Domain Specialization:
+#   General models know a little about everything. A domain-specific model
+#   knows A LOT about one thing. For code generation, a specialized 1.5B model
+#   often outperforms a general 7B model — and it's 4x faster at inference.
+#
+# WHY Qwen2.5-Coder?
+#   Qwen2.5-Coder is pre-trained on code (92B tokens of source code).
+#   It already "speaks Python" — we're teaching it to follow coding instructions.
+#   Fine-tuning a code-pretrained model is like teaching a programmer new tasks,
+#   vs teaching a novelist to code from scratch.
+#
+# RUN: uv run tfab train docs/examples/03-code-assistant/tenfabric.yaml
+
+project: code-assistant
+version: 1
+
+model:
+  base: Qwen/Qwen2.5-Coder-1.5B     # Code-specialized model
+  method: lora
+  quantization: 4bit
+  # WHY a code-specific base model?
+  # Starting from a code-pretrained model means:
+  #   1. It already knows Python syntax, indentation, common patterns
+  #   2. It understands code comments and docstrings
+  #   3. We only need to teach it to follow INSTRUCTIONS about code
+  # Starting from a general model would require teaching all of that from scratch.
+
+dataset:
+  source: iamtarun/python_code_instructions_18k_alpaca  # 18K Python examples
+  format: alpaca                     # Same {instruction, input, output} format
+  max_samples: 3000                  # 3K examples — focused on quality
+  # WHY this dataset?
+  # It has 18K examples of:
+  #   instruction: "Write a function that reverses a string"
+  #   output: "def reverse_string(s): return s[::-1]"
+  # Clean, focused, Python-only. No noise from other languages.
+
+training:
+  backend: trl
+  method: sft
+  epochs: 2                          # 2 epochs — code benefits from repetition
+  batch_size: 4
+  learning_rate: 1e-4                # Slightly lower LR for code
+  max_seq_length: 1024               # Code can be longer than natural language
+  gradient_checkpointing: true
+  optimizer: adamw_8bit
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  # WHY 2 epochs for code?
+  # Code has stricter patterns than natural language. A misplaced indent
+  # breaks everything. More exposure (2 passes) helps the model internalize
+  # exact syntax patterns. We use a lower learning rate (1e-4 vs 2e-4) to
+  # compensate — slower learning over more steps = more precise weights.
+  #
+  # WHY max_seq_length: 1024?
+  # Python functions can be 50+ lines. 512 tokens truncates many examples.
+  # 1024 captures ~95% of examples fully. Cost: ~2x memory per example,
+  # but with 4-bit quantization + gradient checkpointing, we still fit in 4GB.
+
+lora:
+  r: 32                              # Higher rank for code — more capacity needed
+  alpha: 16
+  dropout: 0.05
+  target_modules: auto
+  # WHY r=32 for code?
+  # Code generation requires learning precise patterns:
+  #   - Exact syntax (def, class, return, yield)
+  #   - Indentation rules (4 spaces, nested blocks)
+  #   - Common algorithms (sort, search, recursion)
+  # This needs more "capacity" than instruction following.
+  # r=32 gives 2x the parameters of r=16, at ~30% more VRAM.
+  #
+  # WHY alpha=16 when r=32?
+  # The effective scaling is alpha/r = 16/32 = 0.5.
+  # This means LoRA changes are applied at HALF strength.
+  # For code, we want the model to preserve its strong code pre-training
+  # while adding instruction-following on top. Lower scaling = more conservative.
+
+infra:
+  provider: local
+
+output:
+  dir: ./outputs/code-assistant
+  merge_adapter: true

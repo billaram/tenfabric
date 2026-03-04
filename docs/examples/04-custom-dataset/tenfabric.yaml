@@ -1,0 +1,93 @@
+# =============================================================================
+# Example 4: Bring Your Own Data
+# =============================================================================
+#
+# WHAT: Fine-tune SmolLM2-1.7B on YOUR OWN data (CSV or JSONL).
+# WHY:  This is the example that matters — production fine-tuning uses YOUR data,
+#        not public datasets. We show how to prepare, format, and train on custom data.
+# VRAM: ~4GB with LoRA 4-bit. Works on RTX 3060+.
+# TIME: ~5 minutes on RTX 3060+.
+#
+# KEY CONCEPT — Data is Everything:
+#   The model architecture and hyperparameters matter, but data quality matters MORE.
+#   A mediocre model trained on excellent data beats an excellent model trained on
+#   mediocre data. This example teaches you to prepare YOUR data correctly.
+#
+# WHY SmolLM2-1.7B?
+#   Built by HuggingFace specifically for efficient fine-tuning on consumer GPUs.
+#   Small enough to iterate fast, capable enough for real tasks.
+#   Perfect for custom data experiments where you want quick feedback.
+#
+# DATA FORMAT:
+#   Your data should be a CSV or JSONL file with at least two columns:
+#     - An "input" column (question, prompt, instruction)
+#     - An "output" column (answer, response, completion)
+#
+#   Example CSV:
+#     question,answer
+#     "What is your return policy?","We accept returns within 30 days..."
+#     "How do I reset my password?","Go to Settings > Security > Reset..."
+#
+#   Example JSONL:
+#     {"instruction": "Summarize this email", "input": "Dear team...", "output": "Meeting moved to 3pm"}
+#     {"instruction": "Draft a reply", "input": "Hi, can we reschedule?", "output": "Sure, how about..."}
+#
+# RUN: uv run tfab train docs/examples/04-custom-dataset/tenfabric.yaml
+
+project: custom-dataset
+version: 1
+
+model:
+  base: HuggingFaceTB/SmolLM2-1.7B  # Compact, fast, fine-tuning-friendly
+  method: lora
+  quantization: 4bit
+
+dataset:
+  source: ./my_data.csv              # YOUR file — CSV or JSONL
+  format: custom                     # Custom format with template below
+  # For JSONL, use: source: ./my_data.jsonl
+  #
+  # The 'custom' format lets you define exactly how your data maps to training text.
+  # This is the most flexible option — works with ANY column names.
+
+training:
+  backend: trl
+  method: sft
+  epochs: 3                          # 3 epochs — small datasets need more passes
+  batch_size: 4
+  learning_rate: 2e-4
+  max_seq_length: 512
+  gradient_checkpointing: true
+  optimizer: adamw_8bit
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  # WHY 3 epochs for custom data?
+  # Custom datasets are usually small (100–5000 examples).
+  # With only 500 examples and batch_size=4, that's only 125 steps per epoch.
+  # 3 epochs = 375 steps — barely enough for the model to learn.
+  #
+  # WATCH FOR OVERFITTING:
+  # If loss drops below 0.1, the model is memorizing, not learning.
+  # Solutions:
+  #   - Reduce epochs (try 2 or 1)
+  #   - Increase dropout (try 0.1 or 0.15)
+  #   - Add more data (most effective)
+  #   - Reduce learning rate (try 1e-4)
+
+lora:
+  r: 16
+  alpha: 16
+  dropout: 0.1                       # Higher dropout for small datasets
+  target_modules: auto
+  # WHY higher dropout for custom data?
+  # Small datasets → high overfitting risk. Dropout 0.1 (vs 0.05) turns off
+  # 10% of weights each step, forcing the model to learn robust patterns
+  # instead of memorizing specific examples. If you have >5000 examples,
+  # you can safely lower this back to 0.05.
+
+infra:
+  provider: local
+
+output:
+  dir: ./outputs/custom-dataset
+  merge_adapter: true
