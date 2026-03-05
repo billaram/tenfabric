@@ -13,6 +13,7 @@ Each example explains **why** every config choice matters — not just what to s
 | 3 | [Code Assistant](./03-code-assistant/) | Qwen2.5-Coder-1.5B | ~4GB | ~8 min | Domain-specific fine-tuning, higher LoRA rank, code generation |
 | 4 | [Bring Your Own Data](./04-custom-dataset/) | SmolLM2-1.7B | ~4GB | ~5 min | Custom CSV/JSONL data, formatting pipeline, overfitting detection |
 | 5 | [DPO Alignment](./05-dpo-alignment/) | Llama-3.2-1B | ~4GB | ~5 min | Preference learning, chosen vs rejected, SFT→DPO pipeline |
+| 6 | [Cloud: RunPod](./06-cloud-runpod/) | Qwen2.5-0.5B | ~2GB | ~2 min | Cloud GPU provisioning, RunPod + SkyPilot, spot instances |
 
 ## How to Run
 

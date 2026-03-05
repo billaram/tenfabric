@@ -75,7 +75,7 @@ class LocalPipeline:
 
             if torch.cuda.is_available():
                 name = torch.cuda.get_device_name(0)
-                vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+                vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 console.print(f"    [dim]GPU: {name} ({vram:.0f}GB)[/]")
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 console.print("    [dim]GPU: Apple Silicon (MPS)[/]")
@@ -141,8 +141,58 @@ class LocalPipeline:
         export_model(config, self._model, self._tokenizer)
 
 
+class CloudPipeline:
+    """Run training on a cloud GPU via SkyPilot. No Temporal required."""
+
+    def __init__(self) -> None:
+        self.store = RunStore()
+
+    def run(self, config: TenfabricConfig) -> None:
+        from tenfabric.infra.skypilot import SkyPilotProvider
+
+        run_id = _generate_run_id()
+        self.store.create(
+            run_id=run_id,
+            project=config.project,
+            model=config.model.base,
+            provider=config.infra.provider.value,
+            status="provisioning",
+        )
+
+        provider = SkyPilotProvider()
+
+        console.print(f"\n[bold cyan]Run:[/] {run_id}\n")
+
+        try:
+            # Provision + run (SkyPilot runs setup & training via cloud re-entry)
+            # No spinner — stdout streams directly so user sees live logs
+            console.print("  [bold]Step 1/2: Provisioning cloud GPU + training...[/]\n")
+            handle = provider.provision(config)
+            console.print("\n  [green]\u2713[/] Step 1/2: Provisioning cloud GPU")
+            console.print(f"    [dim]Cluster: {handle.instance_id}[/]")
+
+            self.store.update(run_id, status="completed")
+            console.print(f"\n[bold green]Cloud training complete![/]")
+            console.print(f"  Output: {config.output.dir}")
+            console.print(f"  Run ID: {run_id}")
+            console.print(f"  Cluster: {handle.instance_id}")
+            console.print(f"  [dim]Teardown: sky down {handle.instance_id}[/]\n")
+
+        except Exception as e:
+            self.store.update(run_id, status="failed", error=str(e))
+            console.print(f"\n[bold red]Cloud training failed:[/] {e}")
+            console.print(f"  Run ID: {run_id}\n")
+            raise
+
+    def _provision(self, provider: object, config: TenfabricConfig) -> None:
+        pass  # called inline above
+
+    def _teardown(self, provider: object, config: TenfabricConfig) -> None:
+        pass  # autostop handles this
+
+
 class TemporalPipeline:
-    """Run training via Temporal workflow for cloud execution with durability."""
+    """Run training via Temporal workflow for durable execution with retries."""
 
     def __init__(self) -> None:
         self.store = RunStore()

@@ -1,0 +1,80 @@
+# =============================================================================
+# Example 6: Cloud Fine-Tuning on RunPod
+# =============================================================================
+#
+# WHAT: Fine-tune Qwen2.5-0.5B on RunPod cloud GPU using SkyPilot.
+# WHY:  Shows how to go from local GPU to cloud — same config, just change infra.
+# COST: ~$0.01–0.05 total (spot RTX 4090 for ~2 minutes of GPU time).
+#
+# HOW IT WORKS:
+#   1. tenfabric generates a SkyPilot task YAML from your config
+#   2. SkyPilot provisions a spot RTX 4090 VM on RunPod
+#   3. The VM installs deps and re-runs `tfab train config.yaml --local`
+#   4. Training runs on the cloud GPU (same as running locally)
+#   5. Outputs are synced back, VM auto-stops after idle timeout
+#
+# PREREQUISITES:
+#   1. Install cloud deps:  uv pip install "skypilot[runpod]"
+#   2. Set RunPod API key:  export RUNPOD_API_KEY=your_key_here
+#   3. Verify setup:        sky check runpod
+#
+# RUN: uv run tfab train docs/examples/06-cloud-runpod/tenfabric.yaml
+
+project: cloud-runpod
+version: 1
+
+model:
+  base: Qwen/Qwen2.5-0.5B           # 0.5B params — tiny, perfect for a quick cloud test
+  method: lora
+  quantization: 4bit                  # ~2GB VRAM needed — any GPU handles this
+
+dataset:
+  source: tatsu-lab/alpaca
+  format: alpaca
+  max_samples: 500                    # Keep it small to minimize cloud cost
+
+training:
+  backend: trl
+  method: sft
+  epochs: 1
+  batch_size: 4
+  learning_rate: 2e-4
+  max_seq_length: 512
+  gradient_checkpointing: true
+
+lora:
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  target_modules: auto
+
+# ---------------------------------------------------------------------------
+# INFRA — This is the key difference from Example 01.
+# Everything above is identical. Only the infra section changes.
+# ---------------------------------------------------------------------------
+infra:
+  provider: runpod                    # Cloud provider — RunPod via SkyPilot
+  gpu: RTX4090                        # 24GB VRAM, cheapest RTX on RunPod (~$0.39/hr)
+  spot: true                          # Spot instances: ~60% cheaper than on-demand
+  autostop: 10m                       # Auto-shutdown 10 min after job finishes
+  disk_size: 50                       # 50GB is plenty for a 0.5B model
+  # WHY RunPod?
+  # RunPod consistently has the cheapest spot GPU prices:
+  #   - RTX 4090: ~$0.39/hr (vs $0.75+ on AWS/GCP for comparable A10G)
+  #   - A100-80GB: $1.64/hr (vs $3.67 on AWS)
+  # SkyPilot handles all the provisioning — you just set provider: runpod.
+  #
+  # WHY spot?
+  # Spot instances use idle GPUs at a discount. The tradeoff: your VM can be
+  # preempted (taken back) if demand spikes. For short fine-tune jobs (<30 min),
+  # preemption is rare and the savings are worth it.
+  #
+  # SCALING UP:
+  # For larger models, just change the gpu:
+  #   gpu: A100-80GB   # For 7B–13B models ($1.64/hr spot on RunPod)
+  #   gpu: H100        # For 34B–70B models ($2.49/hr spot on RunPod)
+  #   gpu: auto        # Let SkyPilot pick the cheapest GPU that fits
+
+output:
+  dir: ./outputs/cloud-runpod
+  merge_adapter: true

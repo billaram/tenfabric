@@ -115,8 +115,14 @@ def _run_local(cfg) -> None:  # type: ignore[no-untyped-def]
 
 
 def _run_cloud(cfg) -> None:  # type: ignore[no-untyped-def]
-    """Run training via Temporal workflow with cloud provisioning."""
-    from tenfabric.core.pipeline import TemporalPipeline
+    """Run training on cloud GPU via SkyPilot (or Temporal if configured)."""
+    if cfg.workflow.temporal_address:
+        from tenfabric.core.pipeline import TemporalPipeline
 
-    pipeline = TemporalPipeline()
-    pipeline.run(cfg)
+        pipeline = TemporalPipeline()
+        pipeline.run(cfg)
+    else:
+        from tenfabric.core.pipeline import CloudPipeline
+
+        pipeline = CloudPipeline()
+        pipeline.run(cfg)

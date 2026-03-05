@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
-import sys
-import time
 from typing import Optional
 
 from rich.console import Console
@@ -24,100 +21,111 @@ async def start_training_workflow(
     temporal_address: str | None = None,
 ) -> dict:
     """Start a training workflow on Temporal and wait for completion."""
-    from temporalio.client import Client
-
     address = temporal_address or config.workflow.temporal_address
-    if not address:
-        address = await _ensure_dev_server()
+    task_queue = config.workflow.task_queue or DEFAULT_TASK_QUEUE
+    config_dict = config.model_dump(mode="json")
 
-    # Start worker in background
-    worker_proc = _start_worker_process(address, config.workflow.task_queue)
+    if address:
+        # Connect to an existing Temporal server
+        return await _run_with_external_server(address, run_id, config_dict, task_queue)
+    else:
+        # Start an embedded dev server via WorkflowEnvironment.start_local()
+        return await _run_with_dev_server(run_id, config_dict, task_queue)
 
-    try:
-        client = await Client.connect(address)
 
-        # Serialize config to dict for Temporal
-        config_dict = config.model_dump(mode="json")
+async def _run_with_external_server(
+    address: str, run_id: str, config_dict: dict, task_queue: str
+) -> dict:
+    """Run workflow against an existing Temporal server."""
+    from temporalio.client import Client
+    from temporalio.worker import Worker
 
-        # Start the workflow
+    from tenfabric.workflows.activities import (
+        export_model,
+        prepare_dataset,
+        provision_infra,
+        setup_environment,
+        teardown_infra,
+        train_model,
+        validate_config,
+    )
+
+    client = await Client.connect(address)
+
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[TrainingPipelineWorkflow],
+        activities=[
+            validate_config,
+            provision_infra,
+            setup_environment,
+            prepare_dataset,
+            train_model,
+            export_model,
+            teardown_infra,
+        ],
+    ):
         handle = await client.start_workflow(
             TrainingPipelineWorkflow.run,
             args=[run_id, config_dict],
             id=run_id,
-            task_queue=config.workflow.task_queue or DEFAULT_TASK_QUEUE,
+            task_queue=task_queue,
         )
-
         console.print(f"  [dim]Temporal workflow started: {handle.id}[/]")
-
-        # Wait for completion
-        result = await handle.result()
-        return result
-
-    finally:
-        if worker_proc:
-            worker_proc.terminate()
-            worker_proc.wait(timeout=5)
+        return await handle.result()
 
 
-async def _ensure_dev_server() -> str:
-    """Start an embedded Temporal dev server if none is running."""
-    address = "localhost:7233"
+async def _run_with_dev_server(
+    run_id: str, config_dict: dict, task_queue: str
+) -> dict:
+    """Start an embedded Temporal dev server and run the workflow."""
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
 
-    # Check if Temporal is already running
-    try:
-        from temporalio.client import Client
+    from tenfabric.workflows.activities import (
+        export_model,
+        prepare_dataset,
+        provision_infra,
+        setup_environment,
+        teardown_infra,
+        train_model,
+        validate_config,
+    )
 
-        client = await Client.connect(address)
-        await client.get_system_info()
-        console.print("  [dim]Connected to existing Temporal server[/]")
-        return address
-    except Exception:
-        pass
-
-    # Start dev server
     console.print("  [dim]Starting Temporal dev server...[/]")
 
     try:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "temporalio.testing._workflow", "--port", "7233"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        # Give it a moment to start
-        time.sleep(2)
-
-        if proc.poll() is not None:
-            raise RuntimeError("Dev server exited immediately")
-
-        console.print("  [green]✓[/] Temporal dev server started")
-        return address
-
-    except FileNotFoundError:
+        env = await WorkflowEnvironment.start_local()
+    except Exception as e:
         raise RuntimeError(
-            "Cannot start Temporal dev server.\n"
-            "Install temporalio: pip install temporalio\n"
+            f"Cannot start Temporal dev server: {e}\n"
+            "Install temporalio with test server support: pip install temporalio\n"
             "Or point to an existing server: workflow.temporal_address in config"
-        )
+        ) from e
 
+    console.print("  [green]\u2713[/] Temporal dev server started")
 
-def _start_worker_process(
-    temporal_address: str, task_queue: str
-) -> subprocess.Popen | None:
-    """Start a Temporal worker in a background process."""
-    try:
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                f"from tenfabric.workflows.worker import start_worker; "
-                f"start_worker('{temporal_address}', '{task_queue}')",
+    async with env:
+        async with Worker(
+            env.client,
+            task_queue=task_queue,
+            workflows=[TrainingPipelineWorkflow],
+            activities=[
+                validate_config,
+                provision_infra,
+                setup_environment,
+                prepare_dataset,
+                train_model,
+                export_model,
+                teardown_infra,
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        time.sleep(1)
-        if proc.poll() is not None:
-            return None
-        return proc
-    except Exception:
-        return None
+        ):
+            handle = await env.client.start_workflow(
+                TrainingPipelineWorkflow.run,
+                args=[run_id, config_dict],
+                id=run_id,
+                task_queue=task_queue,
+            )
+            console.print(f"  [dim]Temporal workflow started: {handle.id}[/]")
+            return await handle.result()

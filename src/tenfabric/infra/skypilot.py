@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 
 import yaml
@@ -33,17 +32,18 @@ class SkyPilotProvider:
     def provision(self, config: TenfabricConfig) -> InfraHandle:
         _check_skypilot_installed()
 
-        sky_yaml = _generate_sky_yaml(config)
+        config_yaml_path = _write_tenfabric_config(config)
+        sky_yaml = _generate_sky_yaml(config, config_yaml_path)
         sky_yaml_path = _write_sky_yaml(sky_yaml, config.project)
 
         console.print(f"    [dim]SkyPilot config: {sky_yaml_path}[/]")
 
-        # Launch via SkyPilot CLI
+        # Launch via SkyPilot CLI — stream stdout so user sees provisioning + training logs.
+        # No timeout: this provisions infrastructure AND runs training, which can take hours.
         result = subprocess.run(
             ["sky", "launch", str(sky_yaml_path), "-y", "--cluster", config.project],
-            capture_output=True,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=600,
         )
 
         if result.returncode != 0:
@@ -106,7 +106,20 @@ def _check_skypilot_installed() -> None:
         )
 
 
-def _generate_sky_yaml(config: TenfabricConfig) -> dict:
+def _write_tenfabric_config(config: TenfabricConfig) -> Path:
+    """Serialize the tenfabric config to a YAML file for upload to the cloud VM."""
+    sky_dir = Path.home() / ".tenfabric" / "skypilot"
+    sky_dir.mkdir(parents=True, exist_ok=True)
+    config_path = sky_dir / f"{config.project}-config.yaml"
+    config_dict = config.model_dump(mode="json")
+    # Force local provider for cloud re-entry
+    config_dict["infra"]["provider"] = "local"
+    with open(config_path, "w") as f:
+        yaml.dump(config_dict, f, default_flow_style=False)
+    return config_path
+
+
+def _generate_sky_yaml(config: TenfabricConfig, config_yaml_path: Path) -> dict:
     """Generate a SkyPilot task YAML from tenfabric config."""
     sky_config: dict = {
         "name": config.project,
@@ -140,11 +153,13 @@ def _generate_sky_yaml(config: TenfabricConfig) -> dict:
     sky_config["resources"] = resources
 
     # Setup script — install tenfabric and training deps
+    # Install from GitHub since tenfabric is not yet published to PyPI
+    pip_source = "git+https://github.com/billaram/tenfabric.git"
     setup_lines = [
-        "pip install 'tenfabric[training]'",
+        f"pip install 'tenfabric[training] @ {pip_source}'",
     ]
     if config.training.backend.value == "unsloth":
-        setup_lines.append("pip install 'tenfabric[unsloth]'")
+        setup_lines.append(f"pip install 'tenfabric[unsloth] @ {pip_source}'")
 
     if config.infra.skypilot.setup:
         setup_lines.append(config.infra.skypilot.setup)
@@ -154,8 +169,8 @@ def _generate_sky_yaml(config: TenfabricConfig) -> dict:
     # Run command — execute tenfabric training
     sky_config["run"] = "tfab train /tmp/tenfabric-config.yaml --local"
 
-    # File mounts — upload the config
-    file_mounts = {"/tmp/tenfabric-config.yaml": "./tenfabric.yaml"}
+    # File mounts — upload the serialized config
+    file_mounts = {"/tmp/tenfabric-config.yaml": str(config_yaml_path)}
     file_mounts.update(config.infra.skypilot.file_mounts)
     sky_config["file_mounts"] = file_mounts
 
