@@ -93,7 +93,7 @@ def _train_sft(
         save_steps=config.training.save_steps,
         max_steps=config.training.max_steps if config.training.max_steps > 0 else -1,
         bf16=True,
-        report_to="none",
+        report_to=config.training.report_to,
     )
 
     trainer = SFTTrainer(
@@ -127,7 +127,7 @@ def _train_dpo(
         logging_steps=config.training.logging_steps,
         save_steps=config.training.save_steps,
         bf16=True,
-        report_to="none",
+        report_to=config.training.report_to,
     )
 
     trainer = DPOTrainer(

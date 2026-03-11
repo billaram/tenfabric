@@ -161,6 +161,8 @@ training:
   max_steps: -1                  # -1 = use epochs (default: -1)
   logging_steps: 10              # >= 1 (default: 10)
   save_steps: 500                # >= 1 (default: 500)
+  report_to: none                # none | wandb | tensorboard | mlflow (default: none)
+  wandb_project: my-project      # Optional W&B project name (default: None)
 
 lora:
   r: 16                          # >= 1 (default: 16)
@@ -657,7 +659,7 @@ training_args = SFTConfig(
     max_steps=config.training.max_steps if config.training.max_steps > 0 else -1,
     bf16=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
-    report_to="none",
+    report_to=config.training.report_to,
 )
 
 trainer = SFTTrainer(
@@ -696,6 +698,8 @@ Every field in `TrainingConfig` (`config/schema.py:81-98`):
 | `max_steps` | -1 | Override epochs with step count | N/A | N/A |
 | `logging_steps` | 10 | How often to log metrics | Cluttered logs | Sparse visibility into training |
 | `save_steps` | 500 | How often to save checkpoints | Disk full from too many checkpoints | Lose progress if training crashes |
+| `report_to` | none | Experiment tracker (none/wandb/tensorboard/mlflow) | N/A | N/A |
+| `wandb_project` | None | W&B project name (when report_to=wandb) | N/A | N/A |
 
 **Optimizer note:** `adamw_8bit` stores optimizer states (momentum, variance) in 8-bit instead of 32-bit, saving ~75% optimizer memory. This is significant — for an 8B model with LoRA (r=16), optimizer states can use 2-4GB.
 

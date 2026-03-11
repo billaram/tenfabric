@@ -67,6 +67,44 @@ class TestTrainingConfig:
         tc = TrainingConfig()
         assert tc.max_steps == -1
 
+    def test_report_to_default(self):
+        tc = TrainingConfig()
+        assert tc.report_to == "none"
+
+    def test_report_to_accepts_valid_values(self):
+        for value in ("none", "wandb", "tensorboard", "mlflow"):
+            tc = TrainingConfig(report_to=value)
+            assert tc.report_to == value
+
+    def test_wandb_project_default(self):
+        tc = TrainingConfig()
+        assert tc.wandb_project is None
+
+    def test_wandb_project_set(self):
+        tc = TrainingConfig(wandb_project="my-project")
+        assert tc.wandb_project == "my-project"
+
+    def test_report_to_in_full_config(self):
+        cfg = TenfabricConfig(
+            project="test",
+            model={"base": "test"},
+            dataset={"source": "test"},
+            training={"report_to": "wandb", "wandb_project": "my-proj"},
+        )
+        assert cfg.training.report_to == "wandb"
+        assert cfg.training.wandb_project == "my-proj"
+
+    def test_existing_configs_backward_compat(self):
+        """Configs without report_to still work (defaults to 'none')."""
+        cfg = TenfabricConfig(
+            project="test",
+            model={"base": "test"},
+            dataset={"source": "test"},
+            training={"epochs": 5},
+        )
+        assert cfg.training.report_to == "none"
+        assert cfg.training.wandb_project is None
+
 
 class TestLoraConfig:
     def test_defaults(self):

@@ -41,6 +41,11 @@ training = [
     "accelerate>=0.30",
     "bitsandbytes>=0.43",
 ]
+tracking = [
+    "wandb>=0.17",
+    "tensorboard>=2.16",
+    "mlflow>=2.13",
+]
 unsloth = [
     "unsloth>=2024.0",
 ]

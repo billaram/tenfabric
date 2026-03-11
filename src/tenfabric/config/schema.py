@@ -96,6 +96,13 @@ class TrainingConfig(BaseModel):
     logging_steps: int = Field(default=10, ge=1)
     save_steps: int = Field(default=500, ge=1)
     eval_steps: Optional[int] = None
+    report_to: str = Field(
+        default="none",
+        description="Experiment tracker: 'none', 'wandb', 'tensorboard', 'mlflow'.",
+    )
+    wandb_project: str | None = Field(
+        default=None, description="W&B project name. Used only when report_to='wandb'."
+    )
 
 
 class LoraConfig(BaseModel):
